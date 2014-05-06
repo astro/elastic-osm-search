@@ -3,18 +3,71 @@
 var expat = require('node-expat');
 var request = require('request');
 
-var CONCURRENCY = 800;
 
-function upload(type, body, cb) {
+function bulkReq(batch, cb) {
     request({
-        method: 'PUT',
-        url: "http://localhost:9201/osm/" + type + "/" + body.id,
-        json: body
-    }, cb);
+        method: 'POST',
+        url: "http://localhost:9200/osm/_bulk",
+        body: batch,
+        json: true
+    }, function(err, res, body) {
+        if (err) {
+            cb(err);
+        } else if (res.statusCode != 200) {
+            cb(new Error(body && body.error || "Unknown error"));
+        } else {
+            cb(null, body);
+        }
+    });
+}
+
+var CONCURRENCY = 4;
+var uploadsPending = 0;
+function doUpload(batch) {
+    bulkReq(batch, function(err) {
+        // console.log("bulkReq", arguments);
+        if (err) {
+            console.error(err.stack || err);
+        }
+        uploadsPending--;
+        if (uploadsPending < CONCURRENCY) {
+            // console.log("resume,", uploadsPending, "pending");
+            process.stdin.resume();
+        } // else
+            // console.log("not resuming,", uploadsPending, "pending");
+    });
+    uploadsPending++;
+    if (uploadsPending >= CONCURRENCY) {
+        // console.log("pause,", uploadsPending, "pending");
+        process.stdin.pause();
+    }
+}
+
+var BATCH_SIZE = 1024;
+var batch = [];
+function onElement(type, body) {
+    if (body.lat && body.lon) {
+        body.lat_lon = body.lat + "," + body.lon;
+    }
+    var bulkCmd = {
+        index: {
+            _type: type,
+            _id: body.id
+        }
+    };
+    batch.push(JSON.stringify(bulkCmd) + "\n" + JSON.stringify(body) + "\n");
+
+    if (batch.length >= BATCH_SIZE) {
+        flushBatch();
+    }
+}
+function flushBatch() {
+    doUpload(batch.join(""));
+    batch = [];
 }
 
 var parser = new expat.Parser();
-var state, current, uploadsPending = 0;
+var state, current;
 parser.on('startElement', function(name, attrs) {
     if (!state && 
         (name == 'node' ||
@@ -29,34 +82,35 @@ parser.on('startElement', function(name, attrs) {
             current.nd = [];
         }
         current.nd.push(attrs.ref);
+    } else if (state && name == 'member') {
+        if (!current.members) {
+            current.members = [];
+        }
+        current.members.push(attrs);
     } else {
-        console.log('startElement', arguments);
+        console.log('in', state, 'unhandled startElement', name, attrs);
     }
 });
 parser.on('endElement', function(name) {
     if (state && name == state) {
-        var type = state, body = current;
-        function go() {
-            upload(type, body, function(err) {
-                uploadsPending--;
-                if (err) {
-                    console.error(err.stack || err);
-                    process.nextTick(go);
-                    return;
-                } else if (uploadsPending < CONCURRENCY) {
-                    process.stdin.resume();
-                }
-            });
-            uploadsPending++;
-            if (uploadsPending > CONCURRENCY) {
-                process.stdin.pause();
-            }
-        }
-        go();
+        onElement(state, current);
 
         state = null;
         current = null;
     }
 });
+
 process.stdin.resume();
 process.stdin.pipe(parser);
+
+parser.on('end', flushBatch);
+parser.on('end', function() {
+    console.log("endDocument");
+});
+process.stdin.on('end', function() {
+    if (batch.length > 0) {
+        console.warn(batch.length + " not processed, flushing again.");
+        flushBatch();
+    }
+    console.log("Fin.");
+});
