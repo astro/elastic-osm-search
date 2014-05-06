@@ -48,7 +48,13 @@ var batch = [];
 function onElement(type, body) {
     if (body.lat && body.lon) {
         body.lat_lon = body.lat + "," + body.lon;
+        body.lon_lat = [body.lon, body.lat];
     }
+    ['id', 'version', 'changeset', 'ele', 'height', 'floors', 'circumference'].forEach(function(numberField) {
+        if (body[numberField]) {
+            body[numberField] = Number(body[numberField]);
+        }
+    });
     var bulkCmd = {
         index: {
             _type: type,
