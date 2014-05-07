@@ -43,9 +43,19 @@ function doUpload(batch) {
     }
 }
 
-var BATCH_SIZE = 1024;
+var BATCH_SIZE = 128;
 var batch = [];
 function onElement(type, body) {
+    if (!body.lat && !body.lon && body.locations && body.locations.length > 0) {
+        body.lat = 0;
+        body.lon = 0;
+        body.locations.forEach(function(loc) {
+            body.lat += loc.lat;
+            body.lon += loc.lon;
+        });
+        body.lat /= body.locations.length;
+        body.lon /= body.locations.length;
+    }
     if (body.lat && body.lon) {
         body.lat_lon = body.lat + "," + body.lon;
         body.lon_lat = [body.lon, body.lat];
@@ -72,6 +82,8 @@ function flushBatch() {
     batch = [];
 }
 
+var locationCache = {};
+
 var parser = new expat.Parser();
 var state, current;
 parser.on('startElement', function(name, attrs) {
@@ -81,6 +93,13 @@ parser.on('startElement', function(name, attrs) {
          name == 'relation')) {
         current = attrs;
         state = name;
+
+        if (attrs.lon && attrs.lat) {
+            locationCache[attrs.id] = {
+                lon: attrs.lon,
+                lat: attrs.lat
+            };
+        }
     } else if (state && name == 'tag' && !current.hasOwnProperty(attrs.k)) {
         current[attrs.k] = attrs.v;
     } else if (state && name == 'nd') {
@@ -88,6 +107,15 @@ parser.on('startElement', function(name, attrs) {
             current.nd = [];
         }
         current.nd.push(attrs.ref);
+        var loc;
+        if ((loc = locationCache[attrs.ref])) {
+            if (!current.locations) {
+                current.locations = [];
+            }
+            current.locations.push(loc);
+        } else {
+            console.log(state + " " + current.id + " references unknown node " + attrs.ref);
+        }
     } else if (state && name == 'member') {
         if (!current.members) {
             current.members = [];
