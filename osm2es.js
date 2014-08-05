@@ -11,6 +11,7 @@ function bulkReq(batch, cb) {
         body: batch,
         json: true
     }, function(err, res, body) {
+        // console.log("bulkReq", arguments);
         if (err) {
             cb(err);
         } else if (res.statusCode != 200) {
@@ -31,14 +32,14 @@ function doUpload(batch) {
         }
         uploadsPending--;
         if (uploadsPending < CONCURRENCY) {
-            // console.log("resume,", uploadsPending, "pending");
+            console.log("resume,", uploadsPending, "pending");
             process.stdin.resume();
-        } // else
-            // console.log("not resuming,", uploadsPending, "pending");
+        } else
+            console.log("not resuming,", uploadsPending, "pending");
     });
     uploadsPending++;
     if (uploadsPending >= CONCURRENCY) {
-        // console.log("pause,", uploadsPending, "pending");
+        console.log("pause,", uploadsPending, "pending");
         process.stdin.pause();
     }
 }
@@ -60,11 +61,6 @@ function onElement(type, body) {
         body.lat_lon = body.lat + "," + body.lon;
         body.lon_lat = [body.lon, body.lat];
     }
-    ['id', 'version', 'changeset', 'ele', 'height', 'floors', 'circumference'].forEach(function(numberField) {
-        if (body[numberField]) {
-            body[numberField] = Number(body[numberField]);
-        }
-    });
     var bulkCmd = {
         index: {
             _type: type,
